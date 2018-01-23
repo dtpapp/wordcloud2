@@ -1,0 +1,409 @@
+---
+title: "Crie sua própria Word Cloud"
+output: 
+  flexdashboard::flex_dashboard:
+runtime: shiny 
+---
+
+
+
+```{r global setup, include=FALSE}
+library(flexdashboard)
+
+suppressMessages(library(stringr))   #Pacote para manipulação de strings
+suppressMessages(library(dplyr))     #Pacote para manipulação de dados
+suppressMessages(require(tm))        #Pacote de para text mining
+
+
+# Desligado:
+# library(rJava)
+# library(RWeka)
+
+
+
+suppressMessages(require(wordcloud2)) #Pacote para nuvem de palavras
+suppressMessages(require(readxl))    #Pacote para leitura de dados excel
+suppressMessages(library(tidytext))  #Manipulação de textos
+suppressMessages(library(reshape2))  #Manipulação de dados
+suppressMessages(library(lexiconPT)) #Importar palavras de sentimentos
+library(memoise)
+library(SnowballC)
+library(purrr)
+library(stringr)
+
+#++++++++++++++++++++++++++++++++++
+# Captação de erros de codificacao:
+catch.error = function(x){
+  # let us create a missing value for test purpose
+  y = NA
+  # Try to catch that error (NA) we just created
+  catch_error = tryCatch(tolower(x), error=function(e) e)
+  # if not an error
+  if (!inherits(catch_error, "error"))
+    y = tolower(x)
+  # check result if error exists, otherwise the function works fine.
+  return(y)
+}
+#++++++++++++++++++++++++++++++++++
+#++++++++++++++++++++++++++++++++++
+# Limpeza de caracteres especiais
+cleanTweets<- function(tweet){
+  
+  # Clean the tweet for sentiment analysis
+  
+  # remove html links
+  
+  tweet = gsub("(f|ht)(tp)(s?)(://)(.*)[.|/](.*)", " ", tweet)
+  
+  # Remove retweet entities
+  
+  tweet = gsub("(RT|via)((?:\\b\\W*@\\w+)+)", " ", tweet)
+  
+  # Remove all "#Hashtag"
+  
+  tweet = gsub("#\\w+", " ", tweet)
+  
+  # Remove all "@people"
+  
+  tweet = gsub("@\\w+", " ", tweet)
+  
+  # Remove all the punctuation
+  
+  tweet = gsub("[[:punct:]]", " ", tweet)
+  
+  # Remove numbers, we need only text for analytics
+  
+  tweet = gsub("[[:digit:]]", " ", tweet)
+  
+  # Remove unnecessary spaces (white spaces, tabs etc)
+  tweet = gsub("[ \t]{2,}", " ", tweet)
+  tweet = gsub("^\\s+|\\s+$", "", tweet)
+  
+  tweet = gsub('https://','',tweet) # removes https://
+  tweet = gsub('http://','',tweet) # removes http://
+  tweet=gsub('[^[:graph:]]', ' ',tweet) ## removes graphic characters 
+  #like emoticons 
+  tweet = gsub('[[:punct:]]', '', tweet) # removes punctuation 
+  tweet = gsub('[[:cntrl:]]', '', tweet) # removes control characters
+  tweet = gsub('\\d+', '', tweet) # removes numbers
+  tweet=str_replace_all(tweet,"[^[:graph:]]", " ")
+  #tweet=SnowballC::wordStem(tweet,language = "portuguese")
+  
+  
+  #Convert all text to lowercase
+  tweet = catch.error(tweet)
+  
+  return(tweet)
+}
+#++++++++++++++++++++++++++++++++++
+#++++++++++++++++++++++++++++++++++
+# Remover NAs
+cleanTweetsAndRemoveNAs<- function(Tweets) {
+  
+  TweetsCleaned = sapply(Tweets, cleanTweets)
+  
+  # Remove the "NA" tweets from this tweet list
+  TweetsCleaned = TweetsCleaned[!is.na(TweetsCleaned)]
+  
+  names(TweetsCleaned) = NULL
+  # Remove the repetitive tweets from this tweet list
+  
+  TweetsCleaned = unique(TweetsCleaned)
+  
+  TweetsCleaned
+}
+#++++++++++++++++++++++++++++++++++
+
+# Using "memoise" to automatically cache the results
+getTermMatrix <- memoise(function(x,excludeWords,ngrams=1,tf_idf=F,textStemming=F) {
+
+  text <- x
+  
+  
+
+  rm_accent <- function(str,pattern="all") {
+  # Rotinas e funções úteis V 1.0
+  # rm.accent - REMOVE ACENTOS DE PALAVRAS
+  # Função que tira todos os acentos e pontuações de um vetor de strings.
+  # Parâmetros:
+  # str - vetor de strings que terão seus acentos retirados.
+  # patterns - vetor de strings com um ou mais elementos indicando quais acentos deverão ser retirados.
+  #            Para indicar quais acentos deverão ser retirados, um vetor com os símbolos deverão ser passados.
+  #            Exemplo: pattern = c("´", "^") retirará os acentos agudos e circunflexos apenas.
+  #            Outras palavras aceitas: "all" (retira todos os acentos, que são "´", "`", "^", "~", "¨", "ç")
+  if(!is.character(str))
+    str <- as.character(str)
+  
+  pattern <- unique(pattern)
+  
+  if(any(pattern=="Ç"))
+    pattern[pattern=="Ç"] <- "ç"
+  
+  symbols <- c(
+    acute = "áéíóúÁÉÍÓÚýÝ",
+    grave = "àèìòùÀÈÌÒÙ",
+    circunflex = "âêîôûÂÊÎÔÛ",
+    tilde = "ãõÃÕñÑ",
+    umlaut = "äëïöüÄËÏÖÜÿ",
+    cedil = "çÇ"
+  )
+  
+  nudeSymbols <- c(
+    acute = "aeiouAEIOUyY",
+    grave = "aeiouAEIOU",
+    circunflex = "aeiouAEIOU",
+    tilde = "aoAOnN",
+    umlaut = "aeiouAEIOUy",
+    cedil = "cC"
+  )
+  
+  accentTypes <- c("´","`","^","~","¨","ç")
+  
+  if(any(c("all","al","a","todos","t","to","tod","todo")%in%pattern)) # opcao retirar todos
+    return(chartr(paste(symbols, collapse=""), paste(nudeSymbols, collapse=""), str))
+  
+  for(i in which(accentTypes%in%pattern))
+    str <- chartr(symbols[i],nudeSymbols[i], str)
+  
+  return(str)
+  }
+  
+  text=rm_accent(text)
+  
+
+
+  myCorpus = Corpus(DataframeSource(as.data.frame(text)))
+  if(textStemming) myCorpus <- Corpus(VectorSource(text))  #Para stemming
+
+  # Convert the text to lower case
+  myCorpus=myCorpus%>%
+    tm_map(content_transformer(tolower))%>%
+    tm_map(removeNumbers)%>%
+    tm_map(removeWords, stopwords("portuguese"))%>%
+    tm_map(removePunctuation)%>%
+    tm_map(stripWhitespace)%>%
+    tm_map(removeWords, excludeWords) 
+  
+    if(textStemming) myCorpus <- tm_map(myCorpus, stemDocument,language="portuguese")
+  
+  
+  
+  
+  myDTM = TermDocumentMatrix(myCorpus,
+              control = list(minWordLength = 1))
+
+  
+    #Se Ngram=True:
+  if(ngrams!=1){
+    Tokenizer <- function(x) NGramTokenizer(x, Weka_control(min = ngrams, max = ngrams))
+    myDTM = TermDocumentMatrix(myCorpus,control = list(tokenize = Tokenizer))
+  }
+  
+      #Se tf.idf for verdadeiro:
+  if(tf_idf==T){
+    myDTM=weightTfIdf(myDTM,normalize=T)
+  }
+  
+  m = as.matrix(myDTM)
+ sort(rowSums(m),decreasing=TRUE)
+  
+})
+
+# Global variables can go here
+n <- 1
+
+
+
+```
+
+
+
+Column
+--------------------------------------
+### Aplicativo para construir nuvem de palavras 
+
+
+
+```{r}
+
+ui <- fluidPage(
+  # Application title
+  titlePanel("Word Cloud"),
+
+  sidebarLayout(
+    # Sidebar with a slider and selection inputs
+    sidebarPanel(
+
+      # Input: Select separator ----
+      radioButtons("sep", "Separador",
+                   choices = c(Comma = ",",
+                               Semicolon = ";",
+                               Tab = "\t"),
+                   selected = ","),
+      fileInput("file1", "Escolha o arquivo no formato CSV",
+                multiple = TRUE,
+                accept = c("text/csv",
+                         "text/comma-separated-values,text/plain",
+                         ".csv")),
+      actionButton("update", "Atualizar nuvem"),
+      # Copy the line below to make a text input box
+  textInput("text", label = h3("Removendo palavras"), value = "inserir stopwords de acordo com instrução"),
+      hr(),
+  sliderInput('size', 'Size of wordcloud', 
+                   min = 0,  max = 5,  value = 1),
+  #ngrams: (desligado)
+      # sliderInput("ngrams",
+      #             "Número de sequências de palavras",
+      #             min = 0,  max = 5,  value = 1),
+      # Input: Checkbox if file has header ----
+      checkboxInput("header", "Marque se a base possuir cabeçalho", TRUE),
+      #checkboxInput("cor", "Marque se deseja usar cor para sentimentos", TRUE),
+      checkboxInput("tf_idf", "Marque se deseja usar a transformação tf-idf", F),
+      checkboxInput("textStemming", "Marque se deseja usar 'Text Steamming' (remover sufixos)", F)
+  #,downloadButton("downloadPlot", "Download")
+    ),
+    
+
+    # Show Word Cloud
+    mainPanel(
+      wordcloud2Output("plot")
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  # Define a reactive expression for the document term matrix
+  terms <- reactive({
+
+    
+    df <- read.csv(input$file1$datapath,
+             header = input$header,
+             sep = input$sep,encoding = "UTF-8")
+    
+    names(df)=c("V1","V2")
+    
+    #Remover linhas duplicadas:
+    df=df%>%
+      distinct(V2,V1,keep_all=T)
+    
+    df=df[,2]
+
+df=apply(data.frame(df),1,cleanTweets)
+
+    
+    # Change when the "update" button is pressed...
+    input$update
+        # ...but not for anything else
+    isolate({
+      withProgress({
+        setProgress(message = "Processing corpus...")
+        excludeWords=input$text
+        # ngrams=input$ngrams
+        ngrams=1
+        tf_idf=input$tf_idf
+        textStemming=input$textStemming
+        excludeWords=as.vector(str_split(excludeWords, fixed(','))[[1]])
+        
+        
+        
+        getTermMatrix(df,excludeWords,ngrams=ngrams,tf_idf=tf_idf,textStemming=textStemming)
+      })
+    })
+  })
+
+  # Make the wordcloud drawing predictable during a session
+  wordcloud_rep <- repeatable(wordcloud2)
+
+  output$plot <- renderWordcloud2({
+    v <- terms()
+    set.seed(1234)
+    
+  d <- data.frame(word = names(v),freq=v)
+
+  sentiLex_lem_PT02 <- lexiconPT::sentiLex_lem_PT02
+      
+      #Selecionando as palavras (seus radicais) e sua polaridade
+      dicionary=data.frame(cbind(sentiLex_lem_PT02$term,sentiLex_lem_PT02$polarity))
+      matriz=d
+      #Arrumando nome das bases de dados2: (Colocar nomes iguais para words)
+      names(dicionary)=c("word", "sentiment")
+      names(matriz)=c("word", "freq")
+      
+      #Transformando palavras em character:
+      dicionary$word=as.character(dicionary$word)
+      matriz$word=as.character(matriz$word)
+      
+      if(input$textStemming){ dicionary$word <- wordStem(dicionary$word,language = "portuguese")}
+      
+      dicionary=dicionary[ dicionary$sentiment==1 | dicionary$sentiment==0 | dicionary$sentiment==-1, ]
+      table(dicionary$sentiment)
+      dicionary$sentiment=as.factor(dicionary$sentiment)
+      #Alterando o nome dos sentimentos:
+      levels(dicionary$sentiment)[levels(dicionary$sentiment)==-1]=c("Negativo")
+      levels(dicionary$sentiment)[levels(dicionary$sentiment)==0]=c("Neutro")
+      levels(dicionary$sentiment)[levels(dicionary$sentiment)==1]=c("Positivo")
+      
+      #Join das palavras do documento com o dicionario ntivo do R
+      sentimentos=data.frame(matriz) %>%
+        left_join(data.frame(dicionary),by="word") %>%
+        select(word,sentiment,freq)%>%
+        distinct(word,.keep_all = T)
+      
+      
+      #Neutro para palavras fora do dicionario
+      sentimentos$sentiment[is.na(sentimentos$sentiment)]="Neutro"
+      
+      #Criando coluna de cores para cada sentimento
+      sentimentos$col=c(ifelse(sentimentos$sentiment=="Neutro","gray",ifelse(sentimentos$sentiment=="Positivo","blue","red")))
+     
+
+    
+      wordcloud_rep(d,size=input$size,color=as.character(sentimentos$col))
+    
+  })
+  
+    # output$downloadPlot<-downloadHandler(
+    #     filename = function() {
+    #       paste('plot', '.png', sep='')
+    #     },
+    #     content=function(file){
+    #       png(file)
+    #       print(wordcloud_rep)
+    #       dev.off()
+    #     },
+    #     contentType='image/png')
+}
+
+# Create Shiny app ----
+shinyApp(ui, server)
+
+
+
+```
+
+
+Column {data-width=110}
+--------------------------------------
+### **Instruções**
+
+**Input da base de dados**
+
+Para dar início a construção da nuvem de palavras selecione o arquivo (em formato csv com codificação UTF-8) que contenha apenas duas colunas em que:
+
+    * Coluna1: usuario
+    * Coluna2: texto
+
+[exemplo de base](https://github.com/Dataprevapp/wordcloud/blob/master/base.csv)
+
+**Stopwords**
+
+Para remover palavras da nuvem de palavras (chamadas de stopwords), basta inseri-las, separadas por vírgula, na caixa "**Removendo palavras**". Exemplo de como devem ser incluidas as palavras:
+
+     nao, dele, dela, nos
+
+**Sentimentos**
+
+Na opção "**Marque se deseja usar cor para sentimentos**" a cor da nuvem é baseada em um dicionário léxico do qual um conjunto de palavras já foram pré-classificadas como positiva, negativa ou neutra.
+
+
+[Codigo no github](https://github.com/Dataprevapp/wordcloud)
