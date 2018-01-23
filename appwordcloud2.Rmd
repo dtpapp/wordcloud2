@@ -13,7 +13,7 @@ library(flexdashboard)
 suppressMessages(library(stringr))   #Pacote para manipulação de strings
 suppressMessages(library(dplyr))     #Pacote para manipulação de dados
 suppressMessages(require(tm))        #Pacote de para text mining
-
+library(RColorBrewer)
 
 # Desligado:
 # library(rJava)
@@ -257,7 +257,7 @@ ui <- fluidPage(
       #             min = 0,  max = 5,  value = 1),
       # Input: Checkbox if file has header ----
       checkboxInput("header", "Marque se a base possuir cabeçalho", TRUE),
-      #checkboxInput("cor", "Marque se deseja usar cor para sentimentos", TRUE),
+      checkboxInput("cor", "Marque se deseja usar cor para sentimentos", TRUE),
       checkboxInput("tf_idf", "Marque se deseja usar a transformação tf-idf", F),
       checkboxInput("textStemming", "Marque se deseja usar 'Text Steamming' (remover sufixos)", F)
   #,downloadButton("downloadPlot", "Download")
@@ -357,8 +357,12 @@ df=apply(data.frame(df),1,cleanTweets)
       sentimentos$col=c(ifelse(sentimentos$sentiment=="Neutro","gray",ifelse(sentimentos$sentiment=="Positivo","blue","red")))
      
 
-    
+    if(input$cor){
       wordcloud_rep(d,size=input$size,color=as.character(sentimentos$col))
+    }else{
+     
+      wordcloud_rep(d,size=input$size,color=brewer.pal(8, "Dark2"))
+    }
     
   })
   
