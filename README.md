@@ -19,5 +19,7 @@ Funcoes auxiliares:
  - frequencia.R
 
 Código do aplicativo:
- - appwordcloud2.Rmd
+ - appwordcloud2.Rmd  (ainda nao funciona, devido a este [erro](https://github.com/Lchiffon/wordcloud2/issues/12) reportando no github do pacote. 
  
+Script para gerar nuvem de palavras com logo:
+ - wordcloud2.R
