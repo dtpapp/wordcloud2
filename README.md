@@ -1,6 +1,9 @@
 # Wordcloud 2
 
-Link do aplicativo:  https://dataprevapp.shinyapps.io/appwordcloud2/  (ainda esta indisponível!)
+Script para gerar nuvem de palavras com logo:
+ - wordcloud2.R
+
+Link do aplicativo:  https://dataprevapp.shinyapps.io/appwordcloud2/  (esta indisponível!)
 
 Esta paste conta com os seguintes arquivos:
 
@@ -21,5 +24,4 @@ Funcoes auxiliares:
 Código do aplicativo:
  - appwordcloud2.Rmd  (ainda nao funciona, devido a este [erro](https://github.com/Lchiffon/wordcloud2/issues/12) reportando no github do pacote. 
  
-Script para gerar nuvem de palavras com logo:
- - wordcloud2.R
+
